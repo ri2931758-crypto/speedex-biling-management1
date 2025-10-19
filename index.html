@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speedex Smart Office Billing Dashboard</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind to use Inter font and apply dark theme -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            },
+            colors: {
+              'gray-900': '#111827',
+              'gray-800': '#1f2937',
+              'blue-400': '#60a5fa',
+              'blue-600': '#2563eb',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+        /* Custom Scrollbar for Dark Theme */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1f2937; /* Gray-800 */
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #4b5563; /* Gray-600 */
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* Gray-500 */
+        }
+        /* Tailwind Field Styles */
+        .input-field, .select-field {
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            background-color: #374151; /* gray-700 */
+            border: 1px solid #4b5563; /* gray-600 */
+            color: white;
+            transition: all 150ms ease-in-out;
+        }
+        .input-field:focus, .select-field:focus {
+            outline: none;
+            border-color: #3b82f6; /* blue-500 */
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+        }
+        .btn-primary {
+            padding: 0.75rem;
+            background-color: #2563eb; /* blue-600 */
+            color: white;
+            font-weight: bold;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: all 150ms ease-in-out;
+        }
+        .btn-primary:hover {
+            background-color: #1d4ed8; /* blue-700 */
+        }
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Ensure the main container fills the available Blogger area */
+        #root {
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 font-sans">
+
+    <div id="root"></div>
+
+    <!-- Load React, ReactDOM, and Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Load Firebase SDKs using module imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, serverTimestamp, setLogLevel, getDocs, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        
+        // Expose Firebase functions globally for the Babel script to use
+        window.firebase = {
+            initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously,
+            getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, serverTimestamp, setLogLevel, getDocs, where
+        };
+
+        // Note: The main React code will access these via window.firebase.getAuth() etc.
+    </script>
+
+    <!-- Load jsPDF and html2canvas dynamically within the React code via the script loader -->
+
+    <script type="text/babel">
+        // Import React essentials from the global scope
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
+        const { createRoot } = ReactDOM;
+        
+        // --- FIREBASE IMPORTS (NOW ACCESSED VIA GLOBAL WINDOW.FIREBASE) ---
+        const { 
+            initializeApp, getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously,
+            getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, serverTimestamp, setLogLevel, getDocs, where
+        } = window.firebase || {};
+
+
+        // --- EXTERNAL LIBRARY LOADER ---
+        let jsPDF = null;
+        let html2canvas = null;
+
+        const loadExternalLibs = async () => {
+            if (window.jsPDF && window.html2canvas) {
+                jsPDF = window.jsPDF.jsPDF;
+                html2canvas = window.html2canvas;
+                return;
+            }
+
+            const loadScript = (src) => new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+
+            try {
+                // Ensure scripts are loaded in order if necessary
+                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+                html2canvas = window.html2canvas;
+                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+                jsPDF = window.jspdf.jsPDF;
+                console.log("PDF libraries loaded successfully.");
+            } catch (error) {
+                console.error("Failed to load PDF libraries:", error);
+            }
+        };
+
+
+        // --- GLOBAL VARIABLES & CONFIG ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'speedex-billing';
+        // Note: The original code assumes __firebase_config is a JSON string.
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Mock Admin Credentials for Demo/Fallback
+        const MOCK_EMAIL = 'admin@speedex.com';
+        const MOCK_PASSWORD = '123456';
+
+        // --- UTILITY ICONS (Simplified to SVG elements) ---
+        const DollarSign = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>;
+        const LayoutDashboard = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>;
+        const Users = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 5.74"/></svg>;
+        const FileText = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>;
+        const BarChart = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>;
+        const LogOut = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+        const Currency = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8"/><line x1="3" y1="3" x2="6" y2="6"/><line x1="21" y1="3" x2="18" y2="6"/><line x1="3" y1="21" x2="6" y2="18"/><line x1="21" y1="21" x2="18" y2="18"/></svg>;
+
+        // --- HELPER FUNCTIONS ---
+        const formatCurrency = (amount, currency) => {
+            let options = { minimumFractionDigits: 0 };
+            let locale = 'en-US';
+            
+            if (currency === 'BDT') {
+                options.style = 'currency';
+                options.currency = 'BDT';
+                locale = 'bn-BD';
+            } else { // USD
+                options.style = 'currency';
+                options.currency = 'USD';
+                locale = 'en-US';
+            }
+            
+            // Custom formatting for BDT as it sometimes shows $ in en-US environment
+            if (currency === 'BDT') {
+                 return `৳${new Intl.NumberFormat('en-IN', options).format(amount)}`;
+            }
+            
+            return new Intl.NumberFormat(locale, options).format(amount);
+        };
+
+        const formatDate = (timestamp) => {
+            if (!timestamp) return 'N/A';
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        };
+
+        // --- FIREBASE INITIALIZATION & AUTH HOOK (Stable Auth) ---
+        let app, db, auth;
+
+        const useFirebase = () => {
+            const [userId, setUserId] = useState(null);
+            const [isAuthenticated, setIsAuthenticated] = useState(false);
+            const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+            const [authError, setAuthError] = useState(null);
+            
+            const isAdmin = useMemo(() => userId === 'mock-admin-id', [userId]);
+
+            useEffect(() => {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase config not found. Using mock admin user.");
+                    setUserId('mock-admin-id');
+                    setIsAuthenticated(true);
+                    setIsLoadingAuth(false);
+                    return;
+                }
+
+                setLogLevel('error');
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                let cleanupFn = null;
+                let isMounted = true;
+
+                const runAuthSetup = async () => {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else if (!auth.currentUser) {
+                             await signInAnonymously(auth);
+                        }
+                    } catch (e) {
+                        console.warn("Initial auth setup failed (token/anonymous):", e.message);
+                    }
+
+                    if (isMounted) {
+                        cleanupFn = onAuthStateChanged(auth, (user) => {
+                            if (user) {
+                                // For demo purpose, map the real UID to 'mock-admin-id' if it's the first time, 
+                                // allowing the admin features to show up. In a real app, you'd check a user collection.
+                                setUserId(user.uid); 
+                                setIsAuthenticated(true);
+                            } else {
+                                setUserId(null);
+                                setIsAuthenticated(false);
+                            }
+                            setIsLoadingAuth(false);
+                        });
+                    }
+                };
+
+                runAuthSetup();
+                loadExternalLibs();
+
+                return () => {
+                     isMounted = false;
+                     if (cleanupFn) cleanupFn();
+                };
+            }, []);
+
+            const login = async (email, password) => {
+                setAuthError(null);
+                setIsLoadingAuth(true);
+                try {
+                    await signInWithEmailAndPassword(auth, email, password);
+                } catch (error) {
+                    if (error.code === 'auth/operation-not-allowed' || error.code === 'auth/unauthorized-domain' || (email === MOCK_EMAIL && password === MOCK_PASSWORD)) {
+                         try {
+                            await signInAnonymously(auth); 
+                            setAuthError(null); // Anonymous sign-in acts as successful login for the demo
+                            // onAuthStateChanged will handle final state update
+                            return true;
+                        } catch (anonymousError) {
+                            setAuthError(error.message.replace('Firebase:', '').trim());
+                            return false; 
+                        }
+                    } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+                        setAuthError("Invalid email or password.");
+                        setIsLoadingAuth(false);
+                        return false;
+                    } else {
+                         console.error("Login Error:", error);
+                         setAuthError(error.message.replace('Firebase:', '').trim());
+                         setIsLoadingAuth(false);
+                         return false;
+                    }
+                }
+                setIsLoadingAuth(false); 
+                return true; 
+            };
+
+            const logout = async () => {
+                try {
+                    await signOut(auth);
+                } catch (error) {
+                    console.error("Logout Error:", error);
+                }
+            };
+
+            return { db, userId, isAuthenticated, isLoadingAuth, authError, login, logout, isAdmin };
+        };
+
+        // --- FIRESTORE DATA HOOK ---
+        const useTransactions = (userId, isAuthenticated, activeUserId) => {
+            const [transactions, setTransactions] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            const targetUserId = activeUserId || userId; // Use activeUserId if provided (for Admin view)
+
+            const getCollectionRef = useCallback(() => {
+                if (!db || !targetUserId || !isAuthenticated) return null;
+                // Private data path: /artifacts/{appId}/users/{userId}/transactions
+                return collection(db, 'artifacts', appId, 'users', targetUserId, 'transactions');
+            }, [targetUserId, isAuthenticated]);
+
+            useEffect(() => {
+                if (!isAuthenticated || !targetUserId) {
+                    setLoading(false);
+                    setTransactions([]);
+                    return;
+                }
+
+                const collectionRef = getCollectionRef();
+                if (!collectionRef) return;
+
+                setLoading(true);
+
+                const q = query(collectionRef, orderBy('date', 'desc')); 
+
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const list = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setTransactions(list);
+                    setLoading(false);
+                }, (error) => {
+                    console.error(`Error listening to transactions:`, error);
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, [isAuthenticated, targetUserId, getCollectionRef]);
+
+            return { transactions, loading, getCollectionRef };
+        };
+
+
+        // --- DUMMY CHART DATA GENERATOR ---
+        const generateChartData = (transactions) => {
+            const data = [];
+            const monthlyData = {};
+
+            transactions.forEach(t => {
+                if (!t.date || !t.amount) return;
+                const date = t.date.toDate ? t.date.toDate() : new Date(t.date);
+                const monthYear = `${date.getFullYear()}-${date.getMonth()}`;
+                
+                if (!monthlyData[monthYear]) {
+                    monthlyData[monthYear] = { income: 0, expense: 0, date: date };
+                }
+
+                if (t.type === 'Income') {
+                    monthlyData[monthYear].income += t.amount;
+                } else if (t.type === 'Expense') {
+                    monthlyData[monthYear].expense += t.amount;
+                }
+            });
+
+            // Sort by date and format
+            Object.keys(monthlyData).sort((a, b) => {
+                const [yearA, monthA] = a.split('-').map(Number);
+                const [yearB, monthB] = b.split('-').map(Number);
+                return new Date(yearA, monthA) - new Date(yearB, monthB);
+            }).slice(-6).forEach(key => { // Show last 6 months
+                const { income, expense, date } = monthlyData[key];
+                data.push({
+                    month: date.toLocaleDateString('en-US', { month: 'short' }),
+                    income,
+                    expense,
+                    net: income - expense
+                });
+            });
+
+            return data;
+        };
+
+        // --- CORE COMPONENTS ---
+
+        // 1. Authentication Component
+        const LoginScreen = ({ login, isLoading, authError }) => {
+            const [email, setEmail] = useState(MOCK_EMAIL);
+            const [password, setPassword] = useState(MOCK_PASSWORD);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                await login(email, password);
+            };
+
+            return (
+                <div 
+                    className="flex items-center justify-center min-h-screen bg-gray-900 p-4"
+                >
+                    <div 
+                        className="w-full max-w-md bg-gray-800 p-8 rounded-3xl shadow-2xl border border-blue-600/70"
+                    >
+                        <div className="text-center mb-8">
+                            <h1 className="text-5xl font-extrabold text-blue-400">Speedex</h1>
+                            <p className="text-gray-400 mt-2 text-lg">Smart Office Billing</p>
+                        </div>
+                        
+                        <form 
+                            onSubmit={handleSubmit} 
+                            className="space-y-6"
+                        >
+                            <input
+                                type="email"
+                                placeholder="Email (admin@speedex.com)"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                className="w-full p-4 rounded-xl bg-gray-700 border border-gray-600 text-white focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                required
+                            />
+                            <input
+                                type="password"
+                                placeholder="Password (123456)"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full p-4 rounded-xl bg-gray-700 border border-gray-600 text-white focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                required
+                            />
+                            
+                            {authError && (
+                                <p 
+                                    className="text-red-400 text-sm text-center font-medium"
+                                >
+                                    Login Error: {authError}
+                                </p>
+                            )}
+                            
+                            <button
+                                type="submit"
+                                disabled={isLoading}
+                                className="w-full p-4 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center justify-center space-x-2 transform hover:scale-[1.01] transition-transform duration-200"
+                            >
+                                {isLoading ? (
+                                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                ) : (
+                                    <span>Access Dashboard (Admin Demo)</span>
+                                )}
+                            </button>
+                        </form>
+                        <div className="text-center text-xs text-gray-500 mt-8">
+                            <p>Demo credentials provided. Uses anonymous sign-in fallback for secure access.</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // 2. Dashboard Header & Stats
+        const StatCard = ({ title, amount, icon, color, currency, delay }) => (
+            <div 
+                className={`p-6 rounded-3xl shadow-xl transition-all border ${color.border} ${color.bg} flex justify-between items-center transform hover:shadow-2xl hover:scale-[1.02]`}
+            >
+                <div>
+                    <p className={`text-sm font-medium ${color.text}`}>{title}</p>
+                    <p className="text-4xl font-extrabold text-white mt-2">{formatCurrency(amount, currency)}</p>
+                </div>
+                <div className={`p-4 rounded-full ${color.iconBg} backdrop-blur-sm`}>
+                    {React.cloneElement(icon, { className: `w-8 h-8 ${color.icon}` })}
+                </div>
+            </div>
+        );
+
+        const ChartPlaceholder = ({ data, currency }) => {
+            // A simple, static bar chart visualization using divs and CSS
+            const maxVal = Math.max(...data.map(d => d.income), ...data.map(d => d.expense));
+
+            return (
+                <div className="relative h-64 w-full flex flex-col justify-end p-4">
+                    <div className="absolute top-0 left-0 right-0 h-full border-l border-b border-gray-600 grid grid-cols-6 gap-2 px-2">
+                        {/* Reference Lines */}
+                        <div className="absolute w-full h-full">
+                            <div className="absolute top-1/4 left-0 w-full border-t border-gray-700 opacity-50"></div>
+                            <div className="absolute top-1/2 left-0 w-full border-t border-gray-700 opacity-50"></div>
+                            <div className="absolute top-3/4 left-0 w-full border-t border-gray-700 opacity-50"></div>
+                        </div>
+
+                        {data.map((d, index) => {
+                            const incomeHeight = (d.income / maxVal) * 90; // Max 90% of container height
+                            const expenseHeight = (d.expense / maxVal) * 90; 
+                            
+                            return (
+                                <div key={index} className="flex flex-col justify-end items-center h-full pt-10">
+                                    {/* Bars */}
+                                    <div className="flex w-full h-full items-end justify-center space-x-0.5">
+                                        {/* Income Bar */}
+                                        <div 
+                                            style={{ height: `${incomeHeight}%` }}
+                                            className="w-1/2 bg-green-500 rounded-t-sm relative group"
+                                        >
+                                            <span className="absolute -top-6 text-xs text-green-300 font-medium whitespace-nowrap hidden group-hover:block transition-opacity">
+                                                {formatCurrency(d.income, currency)}
+                                            </span>
+                                        </div>
+                                        {/* Expense Bar */}
+                                        <div 
+                                            style={{ height: `${expenseHeight}%` }}
+                                            className="w-1/2 bg-red-500 rounded-t-sm relative group"
+                                        >
+                                            <span className="absolute -top-6 text-xs text-red-300 font-medium whitespace-nowrap hidden group-hover:block transition-opacity">
+                                                {formatCurrency(d.expense, currency)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    {/* Label */}
+                                    <p className="text-xs text-gray-400 mt-2">{d.month}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <p className="absolute top-0 left-4 text-xs text-gray-500">Amount ({currency})</p>
+                </div>
+            );
+        };
+
+        // 3. Main Dashboard View
+        const Dashboard = ({ transactions, loading, currency }) => {
+            
+            // Memoized calculation of financial summaries
+            const { 
+                totalIncome, 
+                totalExpense, 
+                netProfit, 
+                currentMonthName,
+                chartData
+            } = useMemo(() => {
+                let income = 0;
+                let expense = 0;
+                const now = new Date();
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+                
+                transactions.forEach(t => {
+                    if (!t.date) return;
+                    const date = t.date.toDate ? t.date.toDate() : new Date(t.date);
+                    if (date.getMonth() === currentMonth && date.getFullYear() === currentYear) {
+                        if (t.type === 'Income') income += t.amount;
+                        if (t.type === 'Expense') expense += t.amount;
+                    }
+                });
+                
+                return {
+                    totalIncome: income,
+                    totalExpense: expense,
+                    netProfit: income - expense,
+                    currentMonthName: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                    chartData: generateChartData(transactions)
+                };
+            }, [transactions]);
+
+
+            const incomeColor = { bg: 'bg-green-800/30', text: 'text-green-300', border: 'border-green-600/50', icon: 'text-green-400', iconBg: 'bg-green-900/50' };
+            const expenseColor = { bg: 'bg-red-800/30', text: 'text-red-300', border: 'border-red-600/50', icon: 'text-red-400', iconBg: 'bg-red-900/50' };
+            const profitColor = { bg: 'bg-blue-800/30', text: 'text-blue-300', border: 'border-blue-600/50', icon: 'text-blue-400', iconBg: 'bg-blue-900/50' };
+            
+            const profitStyle = netProfit >= 0 ? profitColor : expenseColor;
+
+            return (
+                <div className="space-y-8">
+                    <h2 className="text-4xl font-extrabold text-white">Office Overview ({currency})</h2>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <StatCard title="Total Income (This Month)" amount={totalIncome} icon={<DollarSign />} color={incomeColor} currency={currency} delay={0} />
+                        <StatCard title="Total Expense (This Month)" amount={totalExpense} icon={<DollarSign />} color={expenseColor} currency={currency} delay={0.1} />
+                        <StatCard title={netProfit >= 0 ? 'Net Profit' : 'Net Loss'} amount={Math.abs(netProfit)} icon={<BarChart />} color={profitStyle} currency={currency} delay={0.2} />
+                    </div>
+
+                    {/* Monthly Trend Chart */}
+                    <div 
+                        className="p-6 rounded-3xl bg-gray-800 shadow-xl border border-gray-700/50"
+                    >
+                        <h3 className="text-2xl font-bold text-white mb-4">6-Month Financial Trend</h3>
+                        {loading ? (
+                            <p className="text-gray-500 h-64 flex items-center justify-center">Loading trend data...</p>
+                        ) : (
+                            <ChartPlaceholder data={chartData} currency={currency} />
+                        )}
+                        <div className="flex justify-center space-x-4 mt-6 text-sm">
+                            <span className="flex items-center text-green-400 font-medium"><div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div> Income</span>
+                            <span className="flex items-center text-red-400 font-medium"><div className="w-3 h-3 bg-red-500 rounded-full mr-2"></div> Expense</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // 4. Transaction Management View
+        const TransactionManagement = ({ transactions, getCollectionRef, loading, currency }) => {
+            const [type, setType] = useState('Income');
+            const [clientName, setClientName] = useState(''); // New Field
+            const [amount, setAmount] = useState('');
+            const [notes, setNotes] = useState('');
+            const [category, setCategory] = useState('Billing');
+            const [date, setDate] = useState(new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+            const [isAdding, setIsAdding] = useState(false);
+            
+            // Filtering states
+            const [searchText, setSearchText] = useState('');
+            const [filterType, setFilterType] = useState('All');
+
+            const handleAddTransaction = async (e) => {
+                e.preventDefault();
+                const transactionsRef = getCollectionRef();
+                if (!transactionsRef) return;
+                setIsAdding(true);
+
+                try {
+                    await addDoc(transactionsRef, {
+                        type,
+                        amount: parseFloat(amount) || 0,
+                        notes,
+                        category,
+                        clientName: clientName || 'N/A', // Save client name
+                        currency, // Save transaction currency
+                        date: new Date(date),
+                        timestamp: serverTimestamp(),
+                    });
+                    setAmount(''); setNotes(''); setClientName('');
+                } catch (error) {
+                    console.error("Error adding transaction:", error);
+                } finally {
+                    setIsAdding(false);
+                }
+            };
+            
+            // Filtered and Sorted Transactions
+            const filteredTransactions = useMemo(() => {
+                let list = transactions;
+                if (filterType !== 'All') {
+                    list = list.filter(t => t.type === filterType);
+                }
+                if (searchText) {
+                    const searchLower = searchText.toLowerCase();
+                    list = list.filter(t => 
+                        t.notes.toLowerCase().includes(searchLower) ||
+                        t.category.toLowerCase().includes(searchLower) ||
+                        t.clientName.toLowerCase().includes(searchLower)
+                    );
+                }
+                return list;
+            }, [transactions, filterType, searchText]);
+
+
+            return (
+                <div className="space-y-6">
+                    <h2 className="text-4xl font-extrabold text-blue-400">Transaction & Client Management</h2>
+                    
+                    {/* Add Transaction Form */}
+                    <div 
+                        className="p-6 rounded-3xl bg-gray-800 shadow-xl border border-gray-700/50"
+                    >
+                        <h3 className="text-2xl font-semibold text-white mb-5 flex items-center"><DollarSign className="w-6 h-6 mr-3" /> Record New Transaction ({currency})</h3>
+                        <form onSubmit={handleAddTransaction} className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                            <select value={type} onChange={(e) => { setType(e.target.value); setCategory(e.target.value === 'Income' ? 'Monthly Billing' : 'Office Rent'); }} className="input-field col-span-1 md:col-span-1">
+                                <option value="Income">Income (আয়)</option>
+                                <option value="Expense">Expense (ব্যয়)</option>
+                            </select>
+                            <select value={category} onChange={(e) => setCategory(e.target.value)} className="input-field col-span-1 md:col-span-2">
+                                {type === 'Income' ? (
+                                    <>
+                                        <option value="Monthly Billing">Monthly Billing (Wi-Fi)</option>
+                                        <option value="New Connection">New Connection Fee</option>
+                                        <option value="Equipment Sale">Equipment Sale</option>
+                                        <option value="Other Revenue">Other Revenue</option>
+                                    </>
+                                ) : (
+                                    <>
+                                        <option value="Office Rent">Office Rent</option>
+                                        <option value="Staff Salary">Staff Salary</option>
+                                        <option value="New Equipment">New Equipment Purchase</option>
+                                        <option value="Utility Bill">Utility Bill (Electricity/Water)</option>
+                                    </>
+                                )}
+                            </select>
+                            <input type="number" step="0.01" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} required min="0.01" className="input-field col-span-1 md:col-span-1" />
+                            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="input-field col-span-1 md:col-span-2" />
+                            
+                            <input type="text" placeholder="Client Name (e.g., Mr. Karim)" value={clientName} onChange={(e) => setClientName(e.target.value)} className="input-field col-span-1 md:col-span-2" />
+                            <input type="text" placeholder="Notes (e.g., 50 Mbps Plan Bill)" value={notes} onChange={(e) => setNotes(e.target.value)} required className="input-field col-span-1 md:col-span-2" />
+                            
+                            <button type="submit" disabled={isAdding} className="btn-primary col-span-1 md:col-span-2 p-4 font-extrabold">
+                                {isAdding ? 'Recording...' : `Record ${type}`}
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* Filter and Search Bar */}
+                    <div 
+                        className="p-4 rounded-3xl bg-gray-800 shadow-xl border border-gray-700/50 flex flex-col sm:flex-row gap-4"
+                    >
+                        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="input-field w-full sm:w-1/3">
+                            <option value="All">Filter: All</option>
+                            <option value="Income">Filter: Income</option>
+                            <option value="Expense">Filter: Expense</option>
+                        </select>
+                        <input
+                            type="text"
+                            placeholder="Search Client/Notes/Category..."
+                            value={searchText}
+                            onChange={(e) => setSearchText(e.target.value)}
+                            className="input-field w-full sm:w-2/3"
+                        />
+                    </div>
+
+                    {/* Transaction List */}
+                    <div 
+                        className="p-6 rounded-3xl bg-gray-800 shadow-xl border border-gray-700/50"
+                    >
+                        <h3 className="text-2xl font-semibold text-white mb-4">Transaction History ({filteredTransactions.length})</h3>
+                        {loading ? (
+                            <p className="text-gray-500">Loading...</p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-700">
+                                    <thead>
+                                        <tr className="text-left text-gray-400 text-sm font-semibold uppercase tracking-wider">
+                                            <th className="p-3">Date</th>
+                                            <th className="p-3">Client / Notes</th>
+                                            <th className="p-3">Category</th>
+                                            <th className="p-3 text-right">Amount ({currency})</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    {filteredTransactions.map((t) => (
+                                        <tr 
+                                            key={t.id} 
+                                            className="border-b border-gray-700 hover:bg-gray-700/50 transition-colors"
+                                        >
+                                            <td className="p-3 text-sm text-gray-400 whitespace-nowrap">{formatDate(t.date)}</td>
+                                            <td className="p-3">
+                                                <div className="font-semibold text-white">{t.clientName}</div>
+                                                <div className="text-xs text-gray-400 truncate max-w-xs">{t.notes}</div>
+                                            </td>
+                                            <td className={`p-3 text-sm font-medium ${t.type === 'Income' ? 'text-green-400' : 'text-red-400'} whitespace-nowrap`}>{t.category} ({t.type})</td>
+                                            <td className={`p-3 text-right font-bold whitespace-nowrap ${t.type === 'Income' ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(t.amount, currency)}</td>
+                                        </tr>
+                                    ))}
+                                    </tbody>
+                                </table>
+                                {filteredTransactions.length === 0 && <p className="text-gray-500 text-center py-8">No matching transactions found.</p>}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // 5. User Management View (Premium Feature Mock)
+        const UserManagement = ({ userId, isAdmin, currency }) => {
+            // In a real app, this would fetch users from a Firestore 'users' collection.
+            const mockUsers = useMemo(() => [
+                { id: userId, name: "Admin (You)", email: MOCK_EMAIL, lastActivity: new Date(Date.now() - 3600000) },
+                { id: 'user-001', name: "Manager - Karim", email: "karim@speedex.com", lastActivity: new Date(Date.now() - 7200000) },
+                { id: 'user-002', name: "Agent - Rina", email: "rina@speedex.com", lastActivity: new Date(Date.now() - 10800000) },
+            ], [userId]);
+            
+            const [activeUserId, setActiveUserId] = useState(userId);
+            const { transactions, loading } = useTransactions(userId, true, activeUserId);
+            
+            // Calculate stats for the selected user
+            const { income, expense, net } = useMemo(() => {
+                let income = 0, expense = 0;
+                transactions.forEach(t => {
+                    if (t.type === 'Income') income += t.amount;
+                    if (t.type === 'Expense') expense += t.amount;
+                });
+                return { income, expense, net: income - expense };
+            }, [transactions]);
+            
+            useEffect(() => {
+                // Reset to self when component mounts
+                setActiveUserId(userId);
+            }, [userId]);
+
+
+            if (!isAdmin) {
+                return (
+                    <div className="p-8 bg-red-900/30 rounded-3xl text-red-400 border border-red-600/50 text-center">
+                        <h2 className="text-3xl font-extrabold mb-2">Access Denied</h2>
+                        <p>This is a **Premium Admin Feature**. Only administrators can view and manage user activity. Your User ID is: <span className='text-white font-mono text-sm block mt-2'>{userId}</span></p>
+                    </div>
+                );
+            }
+            
+            const activeUser = mockUsers.find(u => u.id === activeUserId) || mockUsers[0];
+
+            return (
+                <div className="space-y-6">
+                    <h2 className="text-4xl font-extrabold text-green-400 flex items-center"><Users className='w-8 h-8 mr-3' /> Staff Management Hub</h2>
+
+                    <div className='grid grid-cols-1 lg:grid-cols-3 gap-6'>
+                        {/* User List */}
+                        <div 
+                            className='p-6 rounded-3xl bg-gray-800 shadow-xl border border-gray-700/50 lg:col-span-1'
+                        >
+                            <h3 className='text-xl font-bold text-white mb-4'>Staff List ({mockUsers.length})</h3>
+                            <div className='space-y-2'>
+                                {mockUsers.map(user => (
+                                    <button 
+                                        key={user.id}
+                                        onClick={() => setActiveUserId(user.id)}
+                                        className={`w-full text-left p-3 rounded-xl transition-colors flex flex-col ${user.id === activeUserId ? 'bg-blue-600 shadow-md ring-2 ring-blue-400' : 'bg-gray-700 hover:bg-gray-600'}`}
+                                    >
+                                        <span className='font-semibold text-white'>{user.name}</span>
+                                        <span className='text-xs text-gray-300'>{user.email}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        {/* User Activity Dashboard */}
+                        <div 
+                            className='p-6 rounded-3xl bg-gray-800 shadow-xl border border-blue-600/50 lg:col-span-2'
+                        >
+                            <h3 className='text-2xl font-bold text-white mb-4'>Activity for: <span className='text-blue-400'>{activeUser.name}</span></h3>
+                            <p className='text-sm text-gray-400 mb-6'>Last Logged Activity: {formatDate(activeUser.lastActivity)}</p>
+
+                            <div className="grid grid-cols-3 gap-4 mb-6">
+                                <div className="p-4 rounded-xl bg-green-900/30 border border-green-600/50">
+                                    <p className="text-sm text-green-300">Total Income</p>
+                                    <p className="text-xl font-bold text-white mt-1">{loading ? '...' : formatCurrency(income, currency)}</p>
+                                </div>
+                                <div className="p-4 rounded-xl bg-red-900/30 border border-red-600/50">
+                                    <p className="text-sm text-red-300">Total Expense</p>
+                                    <p className="text-xl font-bold text-white mt-1">{loading ? '...' : formatCurrency(expense, currency)}</p>
+                                </div>
+                                <div className="p-4 rounded-xl bg-blue-900/30 border border-blue-600/50">
+                                    <p className="text-sm text-blue-300">Net P/L</p>
+                                    <p className="text-xl font-bold text-white mt-1">{loading ? '...' : formatCurrency(net, currency)}</p>
+                                </div>
+                            </div>
+                            
+                            <h4 className='text-lg font-semibold text-white mt-8 mb-3'>Recent Transactions Log ({transactions.length})</h4>
+                            <div className='max-h-52 overflow-y-auto space-y-2 pr-2 custom-scrollbar'>
+                                {loading ? (
+                                    <p className='text-gray-500'>Loading user transactions...</p>
+                                ) : transactions.length === 0 ? (
+                                    <p className='text-gray-500'>No transactions recorded by this user.</p>
+                                ) : (
+                                    transactions.slice(0, 5).map(t => (
+                                        <div key={t.id} className={`p-2 rounded-lg flex justify-between ${t.type === 'Income' ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
+                                            <span className='text-sm text-white'>{t.clientName || t.notes}</span>
+                                            <span className={`text-sm font-semibold ${t.type === 'Income' ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(t.amount, currency)}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // 6. MAIN APP COMPONENT
+        const App = () => {
+            const { 
+                userId, 
+                isAuthenticated, 
+                isLoadingAuth, 
+                authError, 
+                login, 
+                logout,
+                isAdmin // New: check if the user is an admin
+            } = useFirebase();
+            
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [currency, setCurrency] = useState('BDT'); // New State: BDT or USD
+            
+            // User Management state: Tracks which user's data to display (default to self)
+            const [activeUserId, setActiveUserId] = useState(userId);
+
+            // transactions hook uses activeUserId for multi-user viewing
+            const { transactions, loading, getCollectionRef } = useTransactions(userId, isAuthenticated, activeUserId);
+
+            useEffect(() => {
+                // Ensure activeUserId resets to self (userId) when currency or component mounts
+                setActiveUserId(userId);
+            }, [userId]);
+
+
+            if (isLoadingAuth) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gray-900 text-blue-400">
+                        <svg className="animate-spin h-8 w-8 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <p>Establishing Secure Connection...</p>
+                    </div>
+                );
+            }
+
+            if (!isAuthenticated) {
+                return <LoginScreen login={login} isLoading={isLoadingAuth} authError={authError} />;
+            }
+
+            const renderContent = () => {
+                // Pass currency prop to all content views
+                switch (activeTab) {
+                    case 'dashboard':
+                        return <Dashboard transactions={transactions} loading={loading} currency={currency} />;
+                    case 'transactions':
+                        return <TransactionManagement transactions={transactions} getCollectionRef={getCollectionRef} loading={loading} currency={currency} />;
+                    case 'reports':
+                        // Reusing the Transaction Management for simplicity of the report view.
+                        return <TransactionManagement transactions={transactions} getCollectionRef={getCollectionRef} loading={loading} currency={currency} />;
+                    case 'users':
+                        return <UserManagement userId={userId} isAdmin={isAdmin} currency={currency} />;
+                    default:
+                        return <Dashboard transactions={transactions} loading={loading} currency={currency} />;
+                }
+            };
+
+            // Conditional nav items based on admin status
+            const navItems = [
+                { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+                { id: 'transactions', label: 'Billing & Records', icon: DollarSign },
+                { id: 'reports', label: 'Reports', icon: FileText },
+                ...(isAdmin ? [{ id: 'users', label: 'Staff Hub', icon: Users }] : []), // Admin-only feature
+            ];
+
+            return (
+                <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col font-sans">
+                    
+                    {/* Header/Nav */}
+                    <header className="sticky top-0 z-20 bg-gray-800 shadow-xl border-b border-blue-600/50">
+                        <div className="max-w-7xl mx-auto p-4 flex justify-between items-center">
+                            <div className="flex items-center space-x-6">
+                                <h1 className="text-3xl font-extrabold text-blue-400">Speedex <span className='text-sm text-gray-400 font-normal hidden sm:inline'>v3.0 Premium</span></h1>
+                                <nav className="hidden md:flex space-x-4">
+                                    {navItems.map(item => (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => { setActiveTab(item.id); setActiveUserId(userId); }}
+                                            className={`flex items-center space-x-2 p-3 rounded-xl font-medium transition-colors transform hover:scale-[1.03]
+                                                ${activeTab === item.id ? 'bg-blue-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700'}`}
+                                        >
+                                            <item.icon className="w-5 h-5" />
+                                            <span>{item.label}</span>
+                                        </button>
+                                    ))}
+                                </nav>
+                            </div>
+                            <div className='flex items-center space-x-4'>
+                                {/* Currency Toggle */}
+                                <button 
+                                    onClick={() => setCurrency(c => c === 'BDT' ? 'USD' : 'BDT')}
+                                    className="flex items-center space-x-2 p-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-white font-medium transition-colors border border-gray-600"
+                                >
+                                    <Currency className="w-5 h-5 text-yellow-400" />
+                                    <span className="text-sm font-semibold">{currency === 'BDT' ? '৳ BDT' : '$ USD'}</span>
+                                </button>
+                                
+                                <button 
+                                    onClick={logout} 
+                                    className="flex items-center space-x-2 p-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium transition-colors"
+                                >
+                                    <LogOut className="w-5 h-5" />
+                                    <span className="hidden sm:inline">Logout</span>
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Mobile Nav */}
+                    <div className="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-blue-600/50 z-30 md:hidden">
+                        <div className="flex justify-around p-2">
+                            {navItems.map(item => (
+                                <button
+                                    key={item.id}
+                                    onClick={() => { setActiveTab(item.id); setActiveUserId(userId); }}
+                                    className={`flex flex-col items-center p-2 rounded-lg transition-colors w-1/4
+                                        ${activeTab === item.id ? 'text-blue-400 bg-gray-700' : 'text-gray-400 hover:text-white'}`}
+                                >
+                                    <item.icon className="w-6 h-6" />
+                                    <span className="text-xs mt-1">{item.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Main Content Area */}
+                    <main className="flex-grow max-w-7xl mx-auto w-full p-4 md:p-8 mb-16 md:mb-0">
+                        <div>
+                            {renderContent()}
+                        </div>
+                        
+                        <div className="text-xs text-gray-700 text-center mt-10 p-2">
+                            App ID: {appId} | Current User UID: {userId || 'N/A'}
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+        
+        // Render the App component
+        const rootElement = document.getElementById('root');
+        createRoot(rootElement).render(<App />);
+
+    </script>
+</body>
+</html>
